@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>My TV Tracker</title>
+<style>
+:root{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#eef2ff;background:#0b1020}
+*{box-sizing:border-box}body{margin:0;background:#0b1020;color:#eef2ff}main{max-width:1050px;margin:auto;padding:18px}
+h1{margin:0 0 4px}.muted{color:#aab3ca}.panel,.show{background:#141b30;border:1px solid #29324d;border-radius:16px;padding:15px;margin:14px 0}
+.row{display:flex;gap:10px;flex-wrap:wrap}.grow{flex:1;min-width:210px}
+input,select,textarea,button{font:inherit;font-size:16px}input,select,textarea{width:100%;background:#0f1628;color:#fff;border:1px solid #39435e;border-radius:10px;padding:12px}
+button{border:0;border-radius:10px;padding:11px 14px;background:#4f75ff;color:white;cursor:pointer}button.secondary{background:#27314c}button.danger{background:#7a3040}
+.result{padding:12px;border-top:1px solid #29324d;display:flex;gap:12px;align-items:center}.result img,.poster{width:62px;border-radius:8px;background:#222}
+.showhead{display:flex;gap:14px}.showhead .poster{width:92px;height:130px;object-fit:cover}.showbody{flex:1;min-width:0}
+.badge{display:inline-block;background:#27314c;border-radius:999px;padding:4px 8px;font-size:13px;margin:2px}
+.progress{height:9px;background:#27314c;border-radius:99px;overflow:hidden;margin:8px 0}.bar{height:100%;background:#4f75ff}
+details{border-top:1px solid #29324d;margin-top:12px;padding-top:10px}summary{cursor:pointer;font-weight:700;padding:7px 0}
+.ep{display:grid;grid-template-columns:34px 1fr auto;gap:9px;padding:10px 0;border-top:1px solid #242d45;align-items:start}.ep input{width:22px;height:22px}
+.epname{font-weight:650}.syn{font-size:14px;color:#bdc5d8;margin-top:4px;line-height:1.35}.date{font-size:13px;color:#aab3ca;white-space:nowrap}
+.topbar{display:flex;justify-content:space-between;gap:10px;align-items:center;flex-wrap:wrap}
+@media(max-width:600px){main{padding:12px}.showhead{align-items:flex-start}.showhead .poster{width:70px;height:100px}.ep{grid-template-columns:30px 1fr}.date{grid-column:2}}
+</style>
+</head>
+<body><main>
+<div class="topbar"><div><h1>📺 My TV Tracker</h1><div class="muted">Search a show. Seasons, episode counts, air dates and synopses load automatically.</div></div><button class="secondary" id="refreshAll">Refresh Shows</button></div>
+<section class="panel">
+<div class="row"><div class="grow"><input id="search" placeholder="Search for a TV show…"></div><button id="searchBtn">Search</button></div>
+<div id="status" class="muted" style="margin-top:9px"></div><div id="results"></div>
+</section>
+<div class="row">
+<div class="grow"><select id="filter"><option>All</option><option>Watching</option><option>Watchlist</option><option>Completed</option><option>On Hold</option></select></div>
+<div class="grow"><input id="librarySearch" placeholder="Filter my shows…"></div>
+</div>
+<div id="library"></div>
+</main>
+<script>
+const API="https://api.tvmaze.com";
+let db=JSON.parse(localStorage.getItem("tvTrackerV1")||'{"shows":{}}');
+const $=s=>document.querySelector(s);
+function save(){localStorage.setItem("tvTrackerV1",JSON.stringify(db))}
+function strip(s){let d=document.createElement("div");d.innerHTML=s||"";return d.textContent||""}
+function fmtDate(s){if(!s)return"TBA";let [y,m,d]=s.split("-").map(Number);return new Date(Date.UTC(y,m-1,d)).toLocaleDateString(undefined,{year:"numeric",month:"short",day:"numeric",timeZone:"UTC"})}
+async function getJSON(u){let r=await fetch(u);if(!r.ok)throw Error("TV data request failed");return r.json()}
+async function searchShows(){
+ let q=$("#search").value.trim();if(!q)return;$("#status").textContent="Searching…";$("#results").innerHTML="";
+ try{let a=await getJSON(API+"/search/shows?q="+encodeURIComponent(q));$("#status").textContent=a.length?`Found ${a.length} matches`:"No matches found.";
+ a.slice(0,10).forEach(x=>{let s=x.show,d=document.createElement("div");d.className="result";d.innerHTML=`${s.image?`<img src="${s.image.medium}" alt="">`:""}<div class="grow"><b>${s.name}</b><div class="muted">${s.premiered?s.premiered.slice(0,4):""} ${s.network?.name||s.webChannel?.name||""}</div></div><button>Add</button>`;d.querySelector("button").onclick=()=>addShow(s);$("#results").append(d)})}
+ catch(e){$("#status").textContent="Could not reach TVmaze. Check your internet connection."}
+}
+async function fetchEpisodes(id){return getJSON(`${API}/shows/${id}/episodes?specials=1`)}
+async function addShow(s){
+ $("#status").textContent=`Loading ${s.name} episodes…`;
+ try{let eps=await fetchEpisodes(s.id);db.shows[s.id]={id:s.id,name:s.name,image:s.image?.medium||"",status:"Watching",summary:strip(s.summary),watched:{},episodes:eps.map(e=>({id:e.id,season:e.season,number:e.number,name:e.name,airdate:e.airdate,summary:strip(e.summary),type:e.type}))};save();$("#status").textContent=`Added ${s.name}.`;render()}
+ catch(e){$("#status").textContent="Could not load episodes."}
+}
+function grouped(eps){let g={};eps.forEach(e=>(g[e.season]??=[]).push(e));return g}
+function render(){
+ let lib=$("#library");lib.innerHTML="";let filter=$("#filter").value,term=$("#librarySearch").value.toLowerCase();
+ let shows=Object.values(db.shows).filter(s=>(filter==="All"||s.status===filter)&&s.name.toLowerCase().includes(term));
+ if(!shows.length){lib.innerHTML='<div class="panel muted">No shows in this view yet.</div>';return}
+ shows.sort((a,b)=>a.name.localeCompare(b.name)).forEach(s=>{
+  let regular=s.episodes.filter(e=>e.number!=null),watched=regular.filter(e=>s.watched[e.id]).length,pct=regular.length?Math.round(watched/regular.length*100):0;
+  let card=document.createElement("section");card.className="show";
+  card.innerHTML=`<div class="showhead">${s.image?`<img class="poster" src="${s.image}" alt="${s.name} poster">`:""}<div class="showbody"><div class="topbar"><h2 style="margin:0">${s.name}</h2><select class="statusSel" style="width:auto"><option>Watching</option><option>Watchlist</option><option>Completed</option><option>On Hold</option></select></div><div><span class="badge">${watched} / ${regular.length} watched</span><span class="badge">${pct}%</span></div><div class="progress"><div class="bar" style="width:${pct}%"></div></div><div class="row"><button class="secondary refresh">Refresh episode data</button><button class="danger remove">Remove</button></div></div></div><div class="seasons"></div>`;
+  let sel=card.querySelector(".statusSel");sel.value=s.status;sel.onchange=()=>{s.status=sel.value;save();render()};
+  card.querySelector(".remove").onclick=()=>{if(confirm(`Remove ${s.name} from your tracker?`)){delete db.shows[s.id];save();render()}};
+  card.querySelector(".refresh").onclick=async()=>{card.querySelector(".refresh").textContent="Refreshing…";try{let eps=await fetchEpisodes(s.id);s.episodes=eps.map(e=>({id:e.id,season:e.season,number:e.number,name:e.name,airdate:e.airdate,summary:strip(e.summary),type:e.type}));save();render()}catch(e){alert("Could not refresh this show.")}};
+  let seas=card.querySelector(".seasons"),g=grouped(s.episodes);
+  Object.keys(g).sort((a,b)=>a-b).forEach(sn=>{
+   let eps=g[sn],reg=eps.filter(e=>e.number!=null),done=reg.filter(e=>s.watched[e.id]).length,det=document.createElement("details");
+   det.innerHTML=`<summary>Season ${sn} — ${reg.length} episode${reg.length===1?"":"s"} • ${done} watched</summary><div class="row" style="margin-bottom:8px"><button class="secondary mark">Mark season watched</button><button class="secondary clear">Clear season</button></div><div class="eplist"></div>`;
+   det.querySelector(".mark").onclick=()=>{reg.forEach(e=>s.watched[e.id]=true);save();render()};
+   det.querySelector(".clear").onclick=()=>{reg.forEach(e=>delete s.watched[e.id]);save();render()};
+   eps.forEach(e=>{let row=document.createElement("div");row.className="ep";let checked=!!s.watched[e.id];row.innerHTML=`<input type="checkbox" ${checked?"checked":""} aria-label="Mark watched"><div><div class="epname">${e.number!=null?`E${e.number}`:"Special"} — ${e.name||"Untitled"}</div><div class="syn">${e.summary||"No synopsis available yet."}</div></div><div class="date">${fmtDate(e.airdate)}</div>`;row.querySelector("input").onchange=ev=>{if(ev.target.checked)s.watched[e.id]=true;else delete s.watched[e.id];save();render()};det.querySelector(".eplist").append(row)});
+   seas.append(det)
+  });lib.append(card)
+ })
+}
+async function refreshAll(){let b=$("#refreshAll");b.textContent="Refreshing…";for(let s of Object.values(db.shows)){try{let eps=await fetchEpisodes(s.id);s.episodes=eps.map(e=>({id:e.id,season:e.season,number:e.number,name:e.name,airdate:e.airdate,summary:strip(e.summary),type:e.type}))}catch(e){}}save();b.textContent="Refresh Shows";render()}
+$("#searchBtn").onclick=searchShows;$("#search").addEventListener("keydown",e=>{if(e.key==="Enter")searchShows()});$("#filter").onchange=render;$("#librarySearch").oninput=render;$("#refreshAll").onclick=refreshAll;render();
+</script></body></html>
